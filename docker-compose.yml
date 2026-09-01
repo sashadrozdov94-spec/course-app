@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: course-app-postgres
+    restart: unless-stopped
+    environment:
+      # Эти три переменные читает сам образ postgres при первом запуске
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: course_app
+    ports:
+      # хост:контейнер — приложение подключается к localhost:5432
+      - '5432:5432'
+    volumes:
+      # Именованный том: данные переживут пересоздание контейнера
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Docker будет считать контейнер "healthy" только когда база реально готова
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d course_app']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Веб-интерфейс для БД: удобно глазами смотреть таблицы. http://localhost:8080
+  adminer:
+    image: adminer:latest
+    container_name: course-app-adminer
+    restart: unless-stopped
+    environment:
+      # Чтобы в форме входа сразу стояли PostgreSQL и наш сервер
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DEFAULT_DRIVER: pgsql
+    ports:
+      - '8080:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
