@@ -33,6 +33,14 @@ export const envSchema = z.object({
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
 
+  // Токены входа (JWT)
+  JWT_ACCESS_SECRET: z.string().min(32, 'Секрет должен быть не короче 32 символов'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'Секрет должен быть не короче 32 символов'),
+  JWT_ACCESS_TTL: z.string().default('15m'),
+  JWT_REFRESH_TTL: z.string().default('30d'),
+  COOKIE_SECURE: z.stringbool().default(false),
+  COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+
   // Папка для загруженных файлов
   UPLOAD_DIR: z.string().min(1).default('./storage/uploads'),
 });

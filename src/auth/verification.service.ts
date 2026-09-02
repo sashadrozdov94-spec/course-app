@@ -25,6 +25,14 @@ export interface VerificationStarted {
   expiresAt: Date;
 }
 
+// Результат успешной проверки кода или ссылки.
+// purpose важен: от него зависит, что делать дальше — активировать
+// аккаунт (регистрация) или выдать токены (вход).
+export interface VerificationConfirmed {
+  userId: string;
+  purpose: VerificationPurpose;
+}
+
 @Injectable()
 export class VerificationService {
   private readonly logger = new Logger(VerificationService.name);
@@ -105,10 +113,13 @@ export class VerificationService {
   }
 
   /**
-   * Проверить код (OTP). Возвращает userId, если код верный.
+   * Проверить код (OTP). Возвращает, чей это код и зачем он выдавался.
    * Каждая неудачная попытка увеличивает счётчик; кончились попытки — код мёртв.
    */
-  async confirmOtp(attemptId: string, code: string): Promise<string> {
+  async confirmOtp(
+    attemptId: string,
+    code: string,
+  ): Promise<VerificationConfirmed> {
     const verification = await this.findActive(attemptId);
 
     if (verification.channel !== VerificationChannel.Otp) {
@@ -129,11 +140,11 @@ export class VerificationService {
     }
 
     await this.markConsumed(verification.id);
-    return verification.userId;
+    return { userId: verification.userId, purpose: verification.purpose };
   }
 
-  /** Проверить токен из ссылки (magic link). Возвращает userId. */
-  async confirmMagicLink(token: string): Promise<string> {
+  /** Проверить токен из ссылки (magic link). */
+  async confirmMagicLink(token: string): Promise<VerificationConfirmed> {
     const secretHash = this.hashSecret(token);
     const verification = await this.repository.findOne({
       where: { secretHash, channel: VerificationChannel.MagicLink },
@@ -150,7 +161,7 @@ export class VerificationService {
     }
 
     await this.markConsumed(verification.id);
-    return verification.userId;
+    return { userId: verification.userId, purpose: verification.purpose };
   }
 
   /** Чей это код — нужно для повторной отправки письма. */

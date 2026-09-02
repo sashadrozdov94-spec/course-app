@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { AuthSettingsService } from '../settings/auth-settings.service.js';
 import { User, UserStatus } from '../users/entities/user.entity.js';
@@ -9,31 +15,52 @@ import {
   type RequestContext,
 } from './audit.service.js';
 import type { ConfirmOtpDto, ResendDto } from './dto/confirm.dto.js';
+import type { LoginDto } from './dto/login.dto.js';
 import type { RegisterDto } from './dto/register.dto.js';
 import { AuthAuditEvent } from './entities/auth-audit-log.entity.js';
 import { VerificationPurpose } from './entities/email-verification.entity.js';
 import { PasswordService } from './password.service.js';
+import { type TokenPair, TokenService } from './token.service.js';
 import { VerificationService } from './verification.service.js';
 
 // Код ошибки PostgreSQL «нарушено требование уникальности»
 const PG_UNIQUE_VIOLATION = '23505';
+
+// Отпечаток несуществующего пароля. Нужен, чтобы сравнение занимало
+// одинаковое время независимо от того, есть такой пользователь или нет.
+const DUMMY_HASH = '$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
 
 export interface RegisterResult {
   id: string;
   email: string;
   status: UserStatus;
   requiresEmailVerification: boolean;
-  // Заполняются только когда подтверждение включено
   attemptId?: string;
   channel?: string;
   expiresAt?: Date;
 }
 
+/** Результат входа: либо токены, либо «нужно подтверждение». */
+export interface LoginResult {
+  requiresEmailVerification: boolean;
+  tokens?: TokenPair;
+  user?: { id: string; email: string };
+  attemptId?: string;
+  channel?: string;
+  expiresAt?: Date;
+}
+
+/** Результат подтверждения кода или ссылки. */
 export interface ConfirmResult {
-  id: string;
-  email: string;
-  status: UserStatus;
-  emailVerifiedAt: Date | null;
+  purpose: VerificationPurpose;
+  user: {
+    id: string;
+    email: string;
+    status: UserStatus;
+    emailVerifiedAt: Date | null;
+  };
+  // Заполняются, только если подтверждали вход
+  tokens?: TokenPair;
 }
 
 @Injectable()
@@ -46,7 +73,10 @@ export class AuthService {
     private readonly settingsService: AuthSettingsService,
     private readonly verificationService: VerificationService,
     private readonly auditService: AuditService,
+    private readonly tokenService: TokenService,
   ) {}
+
+  // ───────────────────────── РЕГИСТРАЦИЯ ─────────────────────────
 
   async register(
     dto: RegisterDto,
@@ -144,17 +174,132 @@ export class AuthService {
     };
   }
 
-  /** Подтверждение кодом из письма */
+  // ─────────────────────────── ВХОД ───────────────────────────
+
+  async login(dto: LoginDto, ctx: RequestContext): Promise<LoginResult> {
+    // Отпечаток пароля скрыт от обычных выборок, поэтому просим его явно
+    const user = await this.usersService.findByEmailWithPassword(dto.email);
+
+    // Сравниваем пароль ВСЕГДА, даже если пользователя нет.
+    // Иначе по времени ответа можно было бы понять, какие адреса
+    // зарегистрированы: «нет пользователя» отвечало бы заметно быстрее.
+    const passwordMatches = await this.passwordService.verify(
+      dto.password,
+      user?.passwordHash ?? DUMMY_HASH,
+    );
+
+    if (!user || !passwordMatches) {
+      await this.audit(ctx, {
+        event: AuthAuditEvent.LoginAttempt,
+        success: false,
+        email: dto.email,
+        reason: user ? 'wrong_password' : 'user_not_found',
+      });
+      // Один и тот же текст в обоих случаях: не подсказываем, что именно
+      // не сошлось — почта или пароль.
+      throw new UnauthorizedException('Неверная почта или пароль');
+    }
+
+    if (user.status === UserStatus.Blocked) {
+      await this.audit(ctx, {
+        event: AuthAuditEvent.LoginAttempt,
+        success: false,
+        email: user.email,
+        userId: user.id,
+        reason: 'blocked',
+      });
+      throw new ForbiddenException('Аккаунт заблокирован');
+    }
+
+    // Почта не подтверждена — входить нельзя, надо сначала закончить регистрацию
+    if (user.status === UserStatus.PendingVerification) {
+      await this.audit(ctx, {
+        event: AuthAuditEvent.LoginAttempt,
+        success: false,
+        email: user.email,
+        userId: user.id,
+        reason: 'email_not_verified',
+      });
+      throw new ForbiddenException('Сначала подтвердите адрес почты');
+    }
+
+    const settings = await this.settingsService.get();
+
+    // Вариант Б из ТЗ: подтверждение входа включено — токены НЕ выдаём
+    if (settings.requireVerificationOnLogin) {
+      const started = await this.verificationService.start(
+        user,
+        VerificationPurpose.Login,
+        settings.verificationChannel,
+      );
+
+      await this.audit(ctx, {
+        event: AuthAuditEvent.VerificationSent,
+        success: true,
+        email: user.email,
+        userId: user.id,
+        reason: `login_${started.channel}`,
+      });
+
+      return {
+        requiresEmailVerification: true,
+        attemptId: started.attemptId,
+        channel: started.channel,
+        expiresAt: started.expiresAt,
+      };
+    }
+
+    // Вариант А из ТЗ: подтверждение выключено — сразу выдаём токены
+    const tokens = await this.issueTokens(user);
+
+    await this.audit(ctx, {
+      event: AuthAuditEvent.LoginAttempt,
+      success: true,
+      email: user.email,
+      userId: user.id,
+    });
+
+    return {
+      requiresEmailVerification: false,
+      tokens,
+      user: { id: user.id, email: user.email },
+    };
+  }
+
+  /**
+   * Обновление токенов.
+   *
+   * По ТЗ refresh на сервере не хранится, поэтому проверяем только подпись
+   * и срок. Ротация: выдаём новую пару, старая просто доживает свой срок.
+   */
+  async refresh(refreshToken: string | undefined): Promise<TokenPair> {
+    if (!refreshToken) {
+      throw new UnauthorizedException('Требуется вход');
+    }
+
+    const payload = this.tokenService.verifyRefresh(refreshToken);
+    const user = await this.usersService.findById(payload.sub);
+
+    if (!user || user.status !== UserStatus.Active) {
+      throw new UnauthorizedException('Требуется вход');
+    }
+
+    return this.issueTokens(user);
+  }
+
+  // ──────────────────── ПОДТВЕРЖДЕНИЕ ПО ПОЧТЕ ────────────────────
+
+  /** Подтверждение кодом из письма. Работает и для регистрации, и для входа. */
   async confirmOtp(
     dto: ConfirmOtpDto,
     ctx: RequestContext,
   ): Promise<ConfirmResult> {
     try {
-      const userId = await this.verificationService.confirmOtp(
+      const confirmed = await this.verificationService.confirmOtp(
         dto.attemptId,
         dto.code,
       );
-      return await this.activate(userId, ctx);
+      return await this.finishConfirmation(confirmed, ctx);
     } catch (error) {
       await this.audit(ctx, {
         event: AuthAuditEvent.VerificationConfirmed,
@@ -165,14 +310,14 @@ export class AuthService {
     }
   }
 
-  /** Подтверждение переходом по ссылке из письма */
+  /** Подтверждение переходом по ссылке из письма. */
   async confirmMagicLink(
     token: string,
     ctx: RequestContext,
   ): Promise<ConfirmResult> {
     try {
-      const userId = await this.verificationService.confirmMagicLink(token);
-      return await this.activate(userId, ctx);
+      const confirmed = await this.verificationService.confirmMagicLink(token);
+      return await this.finishConfirmation(confirmed, ctx);
     } catch (error) {
       await this.audit(ctx, {
         event: AuthAuditEvent.VerificationConfirmed,
@@ -183,7 +328,7 @@ export class AuthService {
     }
   }
 
-  /** Отправить письмо заново */
+  /** Отправить письмо заново. */
   async resend(
     dto: ResendDto,
     ctx: RequestContext,
@@ -204,28 +349,53 @@ export class AuthService {
     return { attemptId: started.attemptId, expiresAt: started.expiresAt };
   }
 
-  /** Общая часть обоих подтверждений: делаем аккаунт рабочим */
-  private async activate(
-    userId: string,
+  // ─────────────────────── общие помощники ───────────────────────
+
+  /**
+   * Что делать после успешной проверки кода — зависит от того, зачем он выдавался:
+   *   регистрация -> активируем аккаунт, токены не выдаём;
+   *   вход        -> аккаунт не трогаем, выдаём токены.
+   */
+  private async finishConfirmation(
+    confirmed: { userId: string; purpose: VerificationPurpose },
     ctx: RequestContext,
   ): Promise<ConfirmResult> {
-    const user = await this.usersService.markEmailVerified(userId);
+    const isLogin = confirmed.purpose === VerificationPurpose.Login;
+
+    const user = isLogin
+      ? await this.usersService.findByIdOrFail(confirmed.userId)
+      : await this.usersService.markEmailVerified(confirmed.userId);
 
     await this.audit(ctx, {
-      event: AuthAuditEvent.VerificationConfirmed,
+      event: isLogin
+        ? AuthAuditEvent.LoginAttempt
+        : AuthAuditEvent.VerificationConfirmed,
       success: true,
       email: user.email,
       userId: user.id,
+      reason: isLogin ? 'login_confirmed' : null,
     });
 
-    this.logger.log(`Почта подтверждена: пользователь ${user.id}`);
+    this.logger.log(
+      isLogin
+        ? `Вход подтверждён: пользователь ${user.id}`
+        : `Почта подтверждена: пользователь ${user.id}`,
+    );
 
     return {
-      id: user.id,
-      email: user.email,
-      status: user.status,
-      emailVerifiedAt: user.emailVerifiedAt,
+      purpose: confirmed.purpose,
+      user: {
+        id: user.id,
+        email: user.email,
+        status: user.status,
+        emailVerifiedAt: user.emailVerifiedAt,
+      },
+      tokens: isLogin ? await this.issueTokens(user) : undefined,
     };
+  }
+
+  private issueTokens(user: User): Promise<TokenPair> {
+    return this.tokenService.issuePair({ sub: user.id, email: user.email });
   }
 
   private audit(

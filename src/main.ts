@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
 import type { Env } from './config/env.schema.js';
 
@@ -8,6 +9,10 @@ async function bootstrap() {
   // Создаём приложение: Nest читает метаданные @Module и собирает
   // граф зависимостей (какой провайдер кому нужен).
   const app = await NestFactory.create(AppModule);
+
+  // Разбирает заголовок Cookie в объект request.cookies.
+  // Без этой строки токены из cookies прочитать не получится.
+  app.use(cookieParser());
 
   // Берём готовый ConfigService из контейнера — конфиг уже провалидирован zod.
   const config = app.get(ConfigService<Env, true>);

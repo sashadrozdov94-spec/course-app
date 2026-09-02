@@ -30,6 +30,11 @@ export class UsersService {
     });
   }
 
+  // Найти по номеру. null, если такого пользователя нет.
+  findById(id: string): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { id } });
+  }
+
   // Найти по номеру. Бросает ошибку, если такого нет.
   async findByIdOrFail(id: string): Promise<User> {
     const user = await this.usersRepository.findOne({ where: { id } });

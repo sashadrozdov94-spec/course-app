@@ -1,0 +1,6 @@
+{
+  // Использовать TypeScript из проекта (версия 6), а не встроенный в редактор.
+  // Иначе редактор показывает ошибки, которых на самом деле нет.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}
