@@ -5,6 +5,7 @@ import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { validateEnv } from './config/env.schema.js';
 import { DatabaseModule } from './database/database.module.js';
+import { RbacAdminModule } from './rbac/rbac-admin.module.js';
 
 @Module({
   imports: [
@@ -27,6 +28,9 @@ import { DatabaseModule } from './database/database.module.js';
     }),
     DatabaseModule,
     AuthModule,
+    // Раздел /admin/rbac/*. Само ядро RBAC приезжает сюда вместе с ним
+    // и с UsersModule, поэтому отдельно RbacModule здесь не нужен.
+    RbacAdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

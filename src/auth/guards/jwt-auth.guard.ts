@@ -26,6 +26,9 @@ export interface AuthenticatedRequest extends Request {
  *   3. найти пользователя по sub;
  *   4. проверить, что он не заблокирован;
  *   5. положить его в запрос, чтобы контроллер знал, кто пришёл.
+ *
+ * Вместе с пользователем в запрос попадают его роли: на них опираются
+ * охранники прав из RBAC.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -51,8 +54,10 @@ export class JwtAuthGuard implements CanActivate {
     // 2. Проверяем подпись и срок. Не прошло — внутри бросается 401
     const payload = this.tokenService.verifyAccess(token);
 
-    // 3. Находим пользователя. Токен мог быть выдан удалённому аккаунту
-    const user = await this.usersService.findById(payload.sub);
+    // 3. Находим пользователя. Токен мог быть выдан удалённому аккаунту.
+    // Роли берём сразу: без них проверка прав ниже по цепочке (PermissionsGuard,
+    // AdminGuard) сходила бы в базу второй раз за тем же пользователем.
+    const user = await this.usersService.findByIdWithRoles(payload.sub);
 
     if (!user) {
       throw new UnauthorizedException('Требуется вход');

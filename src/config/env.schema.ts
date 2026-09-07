@@ -4,7 +4,9 @@ import * as z from 'zod';
 // Если что-то заполнено неправильно — приложение не запустится и скажет, что не так.
 export const envSchema = z.object({
   // Приложение
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z
+    .enum(['development', 'test', 'production'])
+    .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   APP_URL: z.url().default('http://localhost:3000'),
 
@@ -34,12 +36,29 @@ export const envSchema = z.object({
   OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
 
   // Токены входа (JWT)
-  JWT_ACCESS_SECRET: z.string().min(32, 'Секрет должен быть не короче 32 символов'),
-  JWT_REFRESH_SECRET: z.string().min(32, 'Секрет должен быть не короче 32 символов'),
+  JWT_ACCESS_SECRET: z
+    .string()
+    .min(32, 'Секрет должен быть не короче 32 символов'),
+  JWT_REFRESH_SECRET: z
+    .string()
+    .min(32, 'Секрет должен быть не короче 32 символов'),
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('30d'),
   COOKIE_SECURE: z.stringbool().default(false),
   COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+
+  // Первый администратор: этому пользователю при старте выдаётся роль admin.
+  // Пусто — никому ничего не выдаётся. 
+  RBAC_BOOTSTRAP_ADMIN_EMAIL: z.string().default(''),
+
+  // Просмотр чужих профилей: сколько штук за сколько секунд с одного
+  // аккаунта. Защита от выкачивания базы пользователей.
+  PROFILE_FOREIGN_READ_LIMIT: z.coerce.number().int().positive().default(20),
+  PROFILE_FOREIGN_READ_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60),
 
   // Папка для загруженных файлов
   UPLOAD_DIR: z.string().min(1).default('./storage/uploads'),

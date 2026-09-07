@@ -35,6 +35,20 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { id } });
   }
 
+  /**
+   * Найти по номеру вместе с ролями.
+   *
+   * Отдельным методом, а не «всегда с ролями»: связка стоит лишнего JOIN,
+   * и большинству мест роли не нужны. Нужны они охраннику JwtAuthGuard —
+   * он кладёт пользователя в запрос, а из запроса его берёт проверка прав.
+   */
+  findByIdWithRoles(id: string): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { id },
+      relations: { roles: true },
+    });
+  }
+
   // Найти по номеру. Бросает ошибку, если такого нет.
   async findByIdOrFail(id: string): Promise<User> {
     const user = await this.usersRepository.findOne({ where: { id } });

@@ -13,7 +13,6 @@ import { User } from '../../users/entities/user.entity.js';
 // Зачем выдан код
 export enum VerificationPurpose {
   Registration = 'registration',
-  PasswordReset = 'password_reset',
   Login = 'login',
 }
 
