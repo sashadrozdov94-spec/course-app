@@ -11,7 +11,7 @@ import { EmailVerification } from './entities/email-verification.entity.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { PasswordService } from './password.service.js';
 import { TokenModule } from './token.module.js';
-import { VerificationService } from './verification.service.js';
+import { VerificationModule } from './verification.module.js';
 
 @Module({
   imports: [
@@ -19,19 +19,15 @@ import { VerificationService } from './verification.service.js';
     TypeOrmModule.forFeature([EmailVerification, AuthAuditLog]),
     // Коробка с токенами (её же импортирует users)
     TokenModule,
+    // Коды и ссылки подтверждения (её же импортирует users)
+    VerificationModule,
     // Чужие коробки, которыми пользуемся
     UsersModule,
     SettingsModule,
     MailModule,
   ],
   controllers: [AuthController],
-  providers: [
-    AuthService,
-    PasswordService,
-    VerificationService,
-    AuditService,
-    JwtAuthGuard,
-  ],
+  providers: [AuthService, PasswordService, AuditService, JwtAuthGuard],
   // Отдаём наружу то, что понадобится другим коробкам:
   // JwtAuthGuard — чтобы закрывать их окна, TokenService — на всякий случай.
   exports: [PasswordService, JwtAuthGuard],

@@ -5,7 +5,6 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { QueryFailedError } from 'typeorm';
 import { AuthSettingsService } from '../settings/auth-settings.service.js';
 import { User, UserStatus } from '../users/entities/user.entity.js';
 import { UsersService } from '../users/users.service.js';
@@ -20,15 +19,14 @@ import type { RegisterDto } from './dto/register.dto.js';
 import { AuthAuditEvent } from './entities/auth-audit-log.entity.js';
 import { VerificationPurpose } from './entities/email-verification.entity.js';
 import { PasswordService } from './password.service.js';
+import { isUniqueViolation } from '../common/postgres-errors.js';
 import { type TokenPair, TokenService } from './token.service.js';
 import { VerificationService } from './verification.service.js';
 
-// Код ошибки PostgreSQL «нарушено требование уникальности»
-const PG_UNIQUE_VIOLATION = '23505';
-
 // Отпечаток несуществующего пароля. Нужен, чтобы сравнение занимало
 // одинаковое время независимо от того, есть такой пользователь или нет.
-const DUMMY_HASH = '$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
+const DUMMY_HASH =
+  '$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
 
 export interface RegisterResult {
   id: string;
@@ -116,10 +114,7 @@ export class AuthService {
       });
     } catch (error) {
       // Страховка от гонки: два запроса с одной почтой в одну миллисекунду
-      if (
-        error instanceof QueryFailedError &&
-        (error.driverError as { code?: string })?.code === PG_UNIQUE_VIOLATION
-      ) {
+      if (isUniqueViolation(error)) {
         await this.audit(ctx, {
           event: AuthAuditEvent.RegistrationAttempt,
           success: false,
@@ -251,6 +246,7 @@ export class AuthService {
 
     // Вариант А из ТЗ: подтверждение выключено — сразу выдаём токены
     const tokens = await this.issueTokens(user);
+    await this.usersService.markLoggedIn(user.id);
 
     await this.audit(ctx, {
       event: AuthAuditEvent.LoginAttempt,
@@ -298,6 +294,10 @@ export class AuthService {
       const confirmed = await this.verificationService.confirmOtp(
         dto.attemptId,
         dto.code,
+        // Смена почты подтверждается своим адресом, не этим: иначе кодом
+        // из письма о смене адреса можно было бы войти или активировать
+        // аккаунт, ни разу не доказав владение новым ящиком.
+        [VerificationPurpose.Registration, VerificationPurpose.Login],
       );
       return await this.finishConfirmation(confirmed, ctx);
     } catch (error) {
@@ -316,7 +316,10 @@ export class AuthService {
     ctx: RequestContext,
   ): Promise<ConfirmResult> {
     try {
-      const confirmed = await this.verificationService.confirmMagicLink(token);
+      const confirmed = await this.verificationService.confirmMagicLink(token, [
+        VerificationPurpose.Registration,
+        VerificationPurpose.Login,
+      ]);
       return await this.finishConfirmation(confirmed, ctx);
     } catch (error) {
       await this.audit(ctx, {
@@ -381,6 +384,12 @@ export class AuthService {
         ? `Вход подтверждён: пользователь ${user.id}`
         : `Почта подтверждена: пользователь ${user.id}`,
     );
+
+    // Отметку о входе ставим только для входа: подтверждение регистрации
+    // входом не считается, токены там и не выдаются.
+    if (isLogin) {
+      await this.usersService.markLoggedIn(user.id);
+    }
 
     return {
       purpose: confirmed.purpose,

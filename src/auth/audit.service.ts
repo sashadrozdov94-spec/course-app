@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AuthAuditEvent, AuthAuditLog } from './entities/auth-audit-log.entity.js';
+import {
+  AuthAuditEvent,
+  AuthAuditLog,
+} from './entities/auth-audit-log.entity.js';
 
 // Кто и откуда пришёл. Заполняет контроллер из HTTP-запроса.
 export interface RequestContext {

@@ -149,7 +149,10 @@ export class AuthController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const result = await this.authService.confirmOtp(dto, this.context(request));
+    const result = await this.authService.confirmOtp(
+      dto,
+      this.context(request),
+    );
     return this.finishConfirmation(result, response);
   }
 

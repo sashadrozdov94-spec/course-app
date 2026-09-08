@@ -14,6 +14,8 @@ import { User } from '../../users/entities/user.entity.js';
 export enum VerificationPurpose {
   Registration = 'registration',
   Login = 'login',
+  EmailChange = 'email_change',
+  AccountDeletion = 'account_deletion',
 }
 
 // Чем подтверждаем: коротким кодом или ссылкой из письма
@@ -45,6 +47,17 @@ export class EmailVerification {
 
   @Column({ type: 'enum', enum: VerificationChannel })
   channel: VerificationChannel;
+
+  /**
+   * Новый адрес — только для purpose = email_change.
+   *
+   * Хранить его обязательно: между «запросил смену» и «подтвердил» проходит
+   * до десяти минут, и к моменту подтверждения знать, на какой адрес
+   * человек переезжал, больше неоткуда. Письмо с кодом уходит именно сюда,
+   * а не на текущую почту — иначе подтверждение ничего не доказывало бы.
+   */
+  @Column({ type: 'varchar', length: 320, nullable: true })
+  newEmail: string | null;
 
   // Сам код не храним — только его отпечаток
   @Column({ type: 'varchar', length: 64 })

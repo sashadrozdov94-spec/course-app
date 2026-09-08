@@ -31,7 +31,23 @@ export interface VerificationStarted {
 export interface VerificationConfirmed {
   userId: string;
   purpose: VerificationPurpose;
+  /** Заполнен только для purpose = email_change. */
+  newEmail: string | null;
 }
+
+/**
+ * Куда ведёт ссылка из письма — зависит от того, зачем выдан код.
+ *
+ * Один адрес на все сценарии не годится: обработчик регистрации и входа
+ * намеренно сужен до своих назначений, и подмешивать туда смену почты
+ * значило бы размывать эту границу обратно.
+ */
+const CONFIRM_PATHS: Record<VerificationPurpose, string> = {
+  [VerificationPurpose.Registration]: '/auth/confirm',
+  [VerificationPurpose.Login]: '/auth/confirm',
+  [VerificationPurpose.EmailChange]: '/users/email-change/confirm',
+  [VerificationPurpose.AccountDeletion]: '/users/deletion/confirm',
+};
 
 @Injectable()
 export class VerificationService {
@@ -53,6 +69,12 @@ export class VerificationService {
     user: User,
     purpose: VerificationPurpose,
     channel: VerificationChannel,
+    /**
+     * Куда слать письмо, если не на текущую почту пользователя.
+     * Нужен для смены адреса: код должен прийти на НОВЫЙ ящик — это и есть
+     * доказательство, что человек им владеет.
+     */
+    newEmail?: string,
   ): Promise<VerificationStarted> {
     await this.consumeOldAttempts(user.id, purpose);
 
@@ -72,6 +94,7 @@ export class VerificationService {
         userId: user.id,
         purpose,
         channel,
+        newEmail: newEmail ?? null,
         secretHash: this.hashSecret(secret),
         expiresAt,
         attempts: 0,
@@ -81,7 +104,13 @@ export class VerificationService {
       }),
     );
 
-    await this.sendLetter(user.email, channel, secret, ttlSeconds);
+    await this.sendLetter(
+      newEmail ?? user.email,
+      channel,
+      secret,
+      ttlSeconds,
+      purpose,
+    );
 
     return {
       attemptId: verification.id,
@@ -109,7 +138,14 @@ export class VerificationService {
       );
     }
 
-    return this.start(user, verification.purpose, verification.channel);
+    // Адрес берём из самой попытки: повтор должен уйти туда же, куда и
+    // первое письмо, иначе код придёт не в тот ящик.
+    return this.start(
+      user,
+      verification.purpose,
+      verification.channel,
+      verification.newEmail ?? undefined,
+    );
   }
 
   /**
@@ -119,8 +155,19 @@ export class VerificationService {
   async confirmOtp(
     attemptId: string,
     code: string,
+    /**
+     * Зачем разрешено подтверждать этот код в этом месте.
+     *
+     * Коды всех видов лежат в одной таблице и внешне неотличимы, поэтому
+     * код, выданный для смены почты, можно предъявить на входе — и
+     * наоборот. Проверяем ДО расхода попытки: чужой сценарий не должен
+     * ни срабатывать, ни сжигать чужой код.
+     */
+    allowedPurposes?: VerificationPurpose[],
   ): Promise<VerificationConfirmed> {
     const verification = await this.findActive(attemptId);
+
+    this.ensurePurposeAllowed(verification.purpose, allowedPurposes);
 
     if (verification.channel !== VerificationChannel.Otp) {
       throw new BadRequestException('Эта попытка подтверждается по ссылке');
@@ -135,16 +182,25 @@ export class VerificationService {
       await this.repository.increment({ id: verification.id }, 'attempts', 1);
       const left = verification.maxAttempts - verification.attempts - 1;
       throw new BadRequestException(
-        left > 0 ? `Неверный код. Осталось попыток: ${left}` : 'Неверный код. Попытки закончились',
+        left > 0
+          ? `Неверный код. Осталось попыток: ${left}`
+          : 'Неверный код. Попытки закончились',
       );
     }
 
     await this.markConsumed(verification.id);
-    return { userId: verification.userId, purpose: verification.purpose };
+    return {
+      userId: verification.userId,
+      purpose: verification.purpose,
+      newEmail: verification.newEmail,
+    };
   }
 
   /** Проверить токен из ссылки (magic link). */
-  async confirmMagicLink(token: string): Promise<VerificationConfirmed> {
+  async confirmMagicLink(
+    token: string,
+    allowedPurposes?: VerificationPurpose[],
+  ): Promise<VerificationConfirmed> {
     const secretHash = this.hashSecret(token);
     const verification = await this.repository.findOne({
       where: { secretHash, channel: VerificationChannel.MagicLink },
@@ -160,14 +216,40 @@ export class VerificationService {
       throw new BadRequestException('Срок действия ссылки истёк');
     }
 
+    this.ensurePurposeAllowed(verification.purpose, allowedPurposes);
+
     await this.markConsumed(verification.id);
-    return { userId: verification.userId, purpose: verification.purpose };
+    return {
+      userId: verification.userId,
+      purpose: verification.purpose,
+      newEmail: verification.newEmail,
+    };
   }
 
   /** Чей это код — нужно для повторной отправки письма. */
   async getUserId(attemptId: string): Promise<string> {
     const verification = await this.findActive(attemptId);
     return verification.userId;
+  }
+
+  /**
+   * Код выдавался не для того, зачем его сейчас предъявляют.
+   *
+   * Наружу говорим ровно то же, что и про неверный код: по разнице ответов
+   * не должно быть видно, какой именно код лежит за этим номером попытки.
+   */
+  private ensurePurposeAllowed(
+    purpose: VerificationPurpose,
+    allowed?: VerificationPurpose[],
+  ): void {
+    if (!allowed || allowed.includes(purpose)) {
+      return;
+    }
+
+    this.logger.warn(
+      `Попытка подтвердить код с назначением "${purpose}" не в том сценарии`,
+    );
+    throw new BadRequestException('Код недействителен');
   }
 
   // ───────── внутренние помощники ─────────
@@ -194,6 +276,7 @@ export class VerificationService {
     channel: VerificationChannel,
     secret: string,
     ttlSeconds: number,
+    purpose: VerificationPurpose,
   ): Promise<void> {
     const ttlMinutes = Math.round(ttlSeconds / 60);
 
@@ -203,7 +286,7 @@ export class VerificationService {
     }
 
     const appUrl = this.config.get('APP_URL', { infer: true });
-    const link = `${appUrl}/auth/confirm?token=${secret}`;
+    const link = `${appUrl}${CONFIRM_PATHS[purpose]}?token=${secret}`;
     await this.mailService.send(magicLinkLetter(email, link, ttlMinutes));
   }
 

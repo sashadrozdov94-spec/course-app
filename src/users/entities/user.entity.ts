@@ -22,6 +22,11 @@ export enum UserStatus {
 
 // Таблица users
 @Entity({ name: 'users' })
+// Индексы под список для администратора: по этим колонкам идут фильтр и
+// сортировка, без них выборка каждый раз читала бы таблицу целиком.
+@Index(['status', 'createdAt'])
+@Index(['createdAt'])
+@Index(['lastLoginAt'])
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -50,6 +55,11 @@ export class User {
   // null = почта ещё не подтверждена
   @Column({ type: 'timestamptz', nullable: true })
   emailVerifiedAt: Date | null;
+
+  // Когда человек последний раз входил. null — ни разу не входил.
+  // Обновляется только при настоящем входе, не при обновлении токенов.
+  @Column({ type: 'timestamptz', nullable: true })
+  lastLoginAt: Date | null;
 
   // Все коды подтверждения этого пользователя
   @OneToMany(() => EmailVerification, (verification) => verification.user)

@@ -2,7 +2,11 @@ import type { Letter } from './mail.service.js';
 
 // Текст писем держим отдельно от логики отправки.
 
-export function otpLetter(to: string, code: string, ttlMinutes: number): Letter {
+export function otpLetter(
+  to: string,
+  code: string,
+  ttlMinutes: number,
+): Letter {
   return {
     to,
     subject: `Код подтверждения: ${code}`,

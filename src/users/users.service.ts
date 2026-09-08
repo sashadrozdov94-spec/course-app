@@ -70,6 +70,47 @@ export class UsersService {
     return this.findByIdOrFail(id);
   }
 
+  /**
+   * Меняет колонки профиля. Возвращает, сколько строк изменилось:
+   * ноль — значит такого пользователя нет.
+   *
+   * Один запрос вместо «прочитать, изменить, сохранить»: так требование
+   * 1.6 ТЗ про минимум обращений выполняется само собой, а заодно между
+   * чтением и записью никто не успеет вклиниться.
+   */
+  async updateProfile(
+    id: string,
+    changes: Partial<
+      Pick<User, 'avatarUrl' | 'status' | 'email' | 'emailVerifiedAt'>
+    >,
+  ): Promise<number> {
+    const result = await this.usersRepository.update({ id }, changes);
+    return result.affected ?? 0;
+  }
+
+  /**
+   * Отметить вход. Вызывается только там, где человек действительно
+   * вошёл, — при обновлении токенов не вызывается: refresh это не вход,
+   * а продление уже выданного доступа.
+   */
+  async markLoggedIn(id: string): Promise<void> {
+    await this.usersRepository.update({ id }, { lastLoginAt: new Date() });
+  }
+
+  /**
+   * Удаляет пользователя. Возвращает, сколько строк удалилось: ноль —
+   * значит его уже нет, и это не ошибка, а идемпотентность (п. 1.6 ТЗ).
+   *
+   * Коды подтверждения и связка с ролями уходят каскадом — так объявлены
+   * внешние ключи. Записи журналов остаются: ссылка на пользователя там
+   * без внешнего ключа, и это намеренно — история не должна исчезать
+   * вместе с тем, о ком она.
+   */
+  async deleteById(id: string): Promise<number> {
+    const result = await this.usersRepository.delete({ id });
+    return result.affected ?? 0;
+  }
+
   // Создаёт пользователя. Пароль сюда приходит уже в виде отпечатка.
   create(data: {
     email: string;

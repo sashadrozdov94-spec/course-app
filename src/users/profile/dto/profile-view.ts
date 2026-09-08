@@ -1,12 +1,5 @@
-import * as z from 'zod';
-import type { User } from '../entities/user.entity.js';
-
-// Проверка номера пользователя из адреса: /users/{userId}
-// Мусор вместо номера отсеется до похода в базу, ответом 400.
-export const userIdParamSchema = z.object({
-  userId: z.uuid('Некорректный идентификатор пользователя'),
-});
-export type UserIdParam = z.infer<typeof userIdParamSchema>;
+import type { User } from '../../entities/user.entity.js';
+import { USERS_ACTIONS } from '../../shared/users-permission.js';
 
 /** Все поля, которые вообще бывают в профиле. */
 export const PROFILE_FIELDS = [
@@ -23,10 +16,6 @@ export type ProfileField = (typeof PROFILE_FIELDS)[number];
 
 /** Профиль в ответе. Полей может быть меньше — сколько разрешено. */
 export type ProfileView = Partial<Record<ProfileField, unknown>>;
-
-/** Разрешение и действие из ТЗ: право users.read. */
-export const PROFILE_PERMISSION = 'users';
-export const PROFILE_READ_ACTION = 'read';
 
 /**
  * Политика полей: какое действие разрешения users какие поля открывает.
@@ -48,11 +37,11 @@ export const PROFILE_FIELD_POLICY: Readonly<
   Record<string, readonly ProfileField[]>
 > = {
   // Базовое право на чужой профиль. Ничего личного: кто это и как выглядит
-  [PROFILE_READ_ACTION]: ['id', 'photo', 'status', 'createdAt'],
+  [USERS_ACTIONS.Read]: ['id', 'photo', 'status', 'createdAt'],
   // Почта — отдельное действие: это личные данные другого человека
-  read_email: ['email'],
+  [USERS_ACTIONS.ReadEmail]: ['email'],
   // Служебные отметки: когда подтвердил почту, когда менялся профиль
-  read_activity: ['emailVerifiedAt', 'updatedAt'],
+  [USERS_ACTIONS.ReadActivity]: ['emailVerifiedAt', 'updatedAt'],
 };
 
 /**

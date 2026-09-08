@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isUniqueViolation } from '../common/postgres-errors.js';
 import { Repository } from 'typeorm';
 import type {
   CreatePermissionDto,
@@ -19,8 +20,6 @@ import {
 } from './entities/rbac-audit-log.entity.js';
 import { RbacAuditService } from './rbac-audit.service.js';
 import { RbacConfigService } from './rbac-config.service.js';
-
-const UNIQUE_VIOLATION = '23505';
 
 @Injectable()
 export class PermissionsService {
@@ -203,7 +202,7 @@ export class PermissionsService {
     actorUserId: string,
     entityId: string | null,
   ): Promise<unknown> {
-    if ((error as { code?: string }).code !== UNIQUE_VIOLATION) {
+    if (!isUniqueViolation(error)) {
       return error;
     }
 

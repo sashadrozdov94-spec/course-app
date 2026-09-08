@@ -4,19 +4,18 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { RbacService } from '../rbac/rbac.service.js';
+import { RbacService } from '../../rbac/rbac.service.js';
+import type { User } from '../entities/user.entity.js';
+import { USERS_ACTIONS, USERS_PERMISSION } from '../shared/users-permission.js';
+import { UserRateLimits } from '../shared/user-rate-limits.service.js';
+import { UsersService } from '../users.service.js';
 import {
   buildProfileView,
   fieldsForActions,
-  PROFILE_PERMISSION,
-  PROFILE_READ_ACTION,
   type ProfileField,
   type ProfileView,
   SELF_PROFILE_FIELDS,
-} from './dto/user-profile.js';
-import type { User } from './entities/user.entity.js';
-import { ProfileReadLimiter } from './profile-read.limiter.js';
-import { UsersService } from './users.service.js';
+} from './dto/profile-view.js';
 
 /**
  * Кто какой профиль видит и в каком объёме.
@@ -25,17 +24,17 @@ import { UsersService } from './users.service.js';
  * остаётся принять запрос и отдать ответ.
  */
 @Injectable()
-export class ProfileAccessService {
+export class ProfileReadService {
   // Отдельный журнал п. 1.5: viewer, target, результат. В базу не пишем —
   // в ТЗ этот пункт помечен как необязательный, а строк тут будет много:
   // каждый просмотр профиля. Понадобится история — есть готовый образец
   // в RbacAuditService.
-  private readonly logger = new Logger('ProfileAccess');
+  private readonly logger = new Logger('ProfileRead');
 
   constructor(
     private readonly usersService: UsersService,
     private readonly rbac: RbacService,
-    private readonly limiter: ProfileReadLimiter,
+    private readonly limits: UserRateLimits,
   ) {}
 
   /**
@@ -56,15 +55,15 @@ export class ProfileAccessService {
     }
 
     // Дальше — только чужие профили. Считаем их отдельным лимитом
-    this.limiter.hit(viewer.id);
+    this.limits.hitForeignRead(viewer.id);
 
     // Что вообще позволяют роли этого человека делать с профилями
-    const actions = await this.rbac.allowedActions(viewer, PROFILE_PERMISSION);
+    const actions = await this.rbac.allowedActions(viewer, USERS_PERMISSION);
 
     // Сценарий 3: базового права users.read нет — дальше не идём.
     // Действия вроде read_email без него не работают: это надстройка над
     // просмотром, а не самостоятельный доступ.
-    if (!actions.has(PROFILE_READ_ACTION)) {
+    if (!actions.has(USERS_ACTIONS.Read)) {
       this.log(viewer.id, targetId, 403, 'нет права users.read');
       throw new ForbiddenException('Нет прав на просмотр чужого профиля');
     }

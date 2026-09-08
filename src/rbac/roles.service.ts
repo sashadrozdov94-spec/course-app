@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isUniqueViolation } from '../common/postgres-errors.js';
 import { Repository } from 'typeorm';
 import type { CreateRoleDto, UpdateRoleDto } from './dto/role.dto.js';
 import { type RoleView, toRoleView } from './dto/role.dto.js';
@@ -15,12 +16,6 @@ import {
 import { ADMIN_ROLE, Role } from './entities/role.entity.js';
 import { RbacAuditService } from './rbac-audit.service.js';
 import { RbacConfigService } from './rbac-config.service.js';
-
-// Код ошибки Postgres «нарушено уникальное ограничение».
-// Проверка «а нет ли уже такого названия» отдельным запросом не спасает от
-// гонки: два запроса могут пройти её одновременно. Настоящую уникальность
-// держит индекс в базе, а мы переводим его ошибку в понятный 409.
-const UNIQUE_VIOLATION = '23505';
 
 @Injectable()
 export class RolesService {
@@ -211,7 +206,7 @@ export class RolesService {
     entityId: string | null,
     reason: string,
   ): Promise<unknown> {
-    if ((error as { code?: string }).code !== UNIQUE_VIOLATION) {
+    if (!isUniqueViolation(error)) {
       return error;
     }
 

@@ -48,7 +48,7 @@ export const envSchema = z.object({
   COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
 
   // Первый администратор: этому пользователю при старте выдаётся роль admin.
-  // Пусто — никому ничего не выдаётся. 
+  // Пусто — никому ничего не выдаётся.
   RBAC_BOOTSTRAP_ADMIN_EMAIL: z.string().default(''),
 
   // Просмотр чужих профилей: сколько штук за сколько секунд с одного
@@ -60,8 +60,26 @@ export const envSchema = z.object({
     .positive()
     .default(60),
 
-  // Папка для загруженных файлов
-  UPLOAD_DIR: z.string().min(1).default('./storage/uploads'),
+  // Изменение профиля: сколько правок за сколько секунд с одного аккаунта
+  PROFILE_WRITE_LIMIT: z.coerce.number().int().positive().default(20),
+  PROFILE_WRITE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+
+  // Запросы на смену почты. Строже остальных: каждый шлёт письмо на
+  // указанный адрес, то есть постороннему человеку.
+  EMAIL_CHANGE_LIMIT: z.coerce.number().int().positive().default(5),
+  EMAIL_CHANGE_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
+
+  // Запросы на удаление аккаунта. Как и смена почты, шлют письмо.
+  DELETION_LIMIT: z.coerce.number().int().positive().default(5),
+  DELETION_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
+
+  // Список пользователей для администратора: выборка с фильтрами
+  USER_LIST_LIMIT: z.coerce.number().int().positive().default(60),
+  USER_LIST_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+
+  // Папка для загруженных файлов. Сами файлы лежат в assets/, а не рядом
+  // с кодом: сервис их только принимает и отдаёт путь.
+  UPLOAD_DIR: z.string().min(1).default('./assets'),
 });
 
 // Тип настроек — берётся из схемы выше автоматически.
