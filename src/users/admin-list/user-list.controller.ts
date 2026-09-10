@@ -1,4 +1,11 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiZodQuery } from '../../common/openapi/zod-openapi.js';
+import {
+  ApiCookieAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
@@ -24,6 +31,8 @@ import { UserListService } from './user-list.service.js';
  * так отказ попадает в журнал вместе с параметрами запроса, чего требует
  * п. 1.5 ТЗ.
  */
+@ApiTags('Администратор: пользователи')
+@ApiCookieAuth('access_token')
 @Controller('admin/users')
 @UseGuards(RateLimitGuard, JwtAuthGuard)
 export class UserListController {
@@ -35,6 +44,22 @@ export class UserListController {
    * Лимит по адресу клиента — грубая сеть; персональный, по аккаунту,
    * стоит в UserRateLimits: выборка со фильтрами дороже обычного чтения.
    */
+  @ApiOperation({
+    summary: 'Список пользователей',
+    description:
+      'Требует право users@list. Пагинация курсорная: nextCursor из ответа ' +
+      'передайте в cursor следующего запроса. Полный адрес почты открывает ' +
+      'право users@read_email, иначе он замаскирован.',
+  })
+  @ApiZodQuery(listUsersSchema)
+  @ApiResponse({ status: 200, description: 'items + nextCursor' })
+  @ApiResponse({
+    status: 400,
+    description: 'Некорректные параметры или курсор',
+  })
+  @ApiResponse({ status: 401, description: 'Нет или невалиден токен' })
+  @ApiResponse({ status: 403, description: 'Нет права users@list' })
+  @ApiResponse({ status: 429, description: 'Превышен лимит запросов' })
   @Get()
   @RateLimit({ limit: 60, windowSeconds: 60 })
   list(

@@ -8,6 +8,14 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { ApiZodBody } from '../../common/openapi/zod-openapi.js';
+import {
+  ApiCookieAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
@@ -39,6 +47,8 @@ import {
  * Устроено так же, как DeletionController: у сценария с
  * подтверждением по почте свой контроллер и свои лимиты.
  */
+@ApiTags('Смена почты')
+@ApiResponse({ status: 429, description: 'Превышен лимит запросов' })
 @Controller('users')
 @UseGuards(RateLimitGuard)
 export class EmailChangeController {
@@ -55,6 +65,23 @@ export class EmailChangeController {
    * строгий (5 за час), стоит в ProfileWriteLimiter: каждый такой запрос
    * шлёт письмо на указанный адрес, то есть постороннему человеку.
    */
+  @ApiOperation({
+    summary: 'Запросить смену почты',
+    description:
+      'Только себе. Код или ссылка уходит на НОВЫЙ адрес — это и есть ' +
+      'доказательство владения им. Чем подтверждать, решает сервер ' +
+      'настройкой verificationChannel.',
+  })
+  @ApiCookieAuth('access_token')
+  @ApiZodBody(emailChangeSchema)
+  @ApiResponse({
+    status: 200,
+    description: 'Требуется подтверждение: challengeId, channel, expiresAt',
+  })
+  @ApiResponse({ status: 400, description: 'Некорректный адрес' })
+  @ApiResponse({ status: 401, description: 'Нет или невалиден токен' })
+  @ApiResponse({ status: 403, description: 'Попытка сменить чужую почту' })
+  @ApiResponse({ status: 409, description: 'Адрес уже занят' })
   @Post(':userId/email-change')
   @HttpCode(200)
   @RateLimit({ limit: 10, windowSeconds: 60 })
@@ -74,6 +101,20 @@ export class EmailChangeController {
    * Срок жизни кода, число попыток и его гашение — на стороне
    * VerificationService, значения берутся из OTP_* в .env.
    */
+  @ApiOperation({
+    summary: 'Подтвердить смену кодом',
+    description: 'Вариант A. Срок и число попыток — из OTP_* в .env.',
+  })
+  @ApiCookieAuth('access_token')
+  @ApiZodBody(confirmEmailChangeSchema)
+  @ApiResponse({ status: 200, description: 'Почта изменена' })
+  @ApiResponse({
+    status: 400,
+    description: 'Неверный код, истёк срок или кончились попытки',
+  })
+  @ApiResponse({ status: 403, description: 'Чужая попытка' })
+  @ApiResponse({ status: 404, description: 'Попытка не найдена' })
+  @ApiResponse({ status: 409, description: 'Адрес успели занять' })
   @Post(':userId/email-change/confirm')
   @HttpCode(200)
   @RateLimit({ limit: 10, windowSeconds: 60 })
@@ -97,6 +138,18 @@ export class EmailChangeController {
    *
    * Два сегмента после /users, поэтому с GET /users/:userId не спорит.
    */
+  @ApiOperation({
+    summary: 'Подтвердить смену по ссылке',
+    description:
+      'Вариант B. БЕЗ входа: письмо открывают там, где читают почту, а не ' +
+      'там, где залогинены. Пропуск — одноразовый токен со сроком.',
+  })
+  @ApiQuery({ name: 'token', required: true, description: 'Токен из письма' })
+  @ApiResponse({ status: 200, description: 'Почта изменена' })
+  @ApiResponse({
+    status: 400,
+    description: 'Ссылка недействительна, использована или истекла',
+  })
   @Get('email-change/confirm')
   @RateLimit({ limit: 10, windowSeconds: 60 })
   confirmByLink(@Query('token') token: string): Promise<EmailChangeConfirmed> {

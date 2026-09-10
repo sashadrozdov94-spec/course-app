@@ -10,6 +10,14 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { ApiZodBody } from '../common/openapi/zod-openapi.js';
+import {
+  ApiCookieAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import type { Env } from '../config/env.schema.js';
@@ -37,6 +45,8 @@ import { type RegisterDto, registerSchema } from './dto/register.dto.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 
 // Все адреса этой коробки начинаются с /auth
+@ApiTags('Аутентификация')
+@ApiResponse({ status: 429, description: 'Превышен лимит запросов' })
 @Controller('auth')
 @UseGuards(RateLimitGuard)
 export class AuthController {
@@ -48,6 +58,19 @@ export class AuthController {
   // ───────────────────────── регистрация ─────────────────────────
 
   // POST /auth/register
+  @ApiOperation({
+    summary: 'Регистрация',
+    description:
+      'Если подтверждение при регистрации включено настройкой, в ответ ' +
+      'придёт номер попытки, а аккаунт останется неподтверждённым.',
+  })
+  @ApiZodBody(registerSchema)
+  @ApiResponse({ status: 201, description: 'Аккаунт создан' })
+  @ApiResponse({
+    status: 400,
+    description: 'Некорректная почта или слабый пароль',
+  })
+  @ApiResponse({ status: 409, description: 'Почта уже занята' })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @RateLimit({ limit: 5, windowSeconds: 60 })
@@ -67,6 +90,18 @@ export class AuthController {
    * cookies, но тело ответа пусть формирует Nest, как обычно.
    * Без passthrough пришлось бы вручную вызывать response.json().
    */
+  @ApiOperation({
+    summary: 'Вход',
+    description:
+      'Токены кладутся в httpOnly cookies. Если включено подтверждение ' +
+      'входа, вместо токенов придёт номер попытки.',
+  })
+  @ApiZodBody(loginSchema)
+  @ApiResponse({
+    status: 200,
+    description: 'Вход выполнен либо требуется подтверждение',
+  })
+  @ApiResponse({ status: 401, description: 'Неверная почта или пароль' })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   // Лимит строгий: 10 попыток в минуту с одного адреса. Это защита от
@@ -97,6 +132,16 @@ export class AuthController {
   }
 
   /** POST /auth/refresh — обменять refresh-токен на новую пару. */
+  @ApiOperation({
+    summary: 'Обновить пару токенов',
+    description: 'refresh-токен берётся из cookie. Выдаётся новая пара.',
+  })
+  @ApiCookieAuth('refresh_token')
+  @ApiResponse({ status: 200, description: 'Выдана новая пара' })
+  @ApiResponse({
+    status: 401,
+    description: 'Токен отсутствует, истёк или аккаунт неактивен',
+  })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @RateLimit({ limit: 30, windowSeconds: 60 })
@@ -118,6 +163,13 @@ export class AuthController {
    * По ТЗ refresh-токены на сервере не хранятся, поэтому «отозвать» выданный
    * токен нельзя. Выход = очистка cookies у этого клиента.
    */
+  @ApiOperation({
+    summary: 'Выход',
+    description:
+      'Стирает cookies. Отозвать уже выданный refresh-токен нельзя: ' +
+      'на сервере они не хранятся.',
+  })
+  @ApiResponse({ status: 200, description: 'Cookies стёрты' })
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   logout(@Res({ passthrough: true }) response: Response) {
@@ -126,6 +178,10 @@ export class AuthController {
   }
 
   /** GET /auth/me — кто я. Первое закрытое окно: работает только с токеном. */
+  @ApiOperation({ summary: 'Кто я' })
+  @ApiCookieAuth('access_token')
+  @ApiResponse({ status: 200, description: 'Свой профиль' })
+  @ApiResponse({ status: 401, description: 'Нет или невалиден токен' })
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: User) {
@@ -141,6 +197,18 @@ export class AuthController {
   // ──────────────────── подтверждение по почте ────────────────────
 
   /** POST /auth/confirm-otp — код из письма (и для регистрации, и для входа). */
+  @ApiOperation({
+    summary: 'Подтвердить код из письма',
+    description:
+      'Только для регистрации и входа. Коды смены почты и удаления ' +
+      'аккаунта здесь не принимаются.',
+  })
+  @ApiZodBody(confirmOtpSchema)
+  @ApiResponse({ status: 200, description: 'Подтверждено' })
+  @ApiResponse({
+    status: 400,
+    description: 'Неверный код, истёк срок или код не для этого сценария',
+  })
   @Post('confirm-otp')
   @HttpCode(HttpStatus.OK)
   @RateLimit({ limit: 10, windowSeconds: 60 })
@@ -157,6 +225,16 @@ export class AuthController {
   }
 
   /** GET /auth/confirm?token=... — переход по ссылке из письма. */
+  @ApiOperation({
+    summary: 'Подтвердить по ссылке из письма',
+    description: 'Только для регистрации и входа.',
+  })
+  @ApiQuery({ name: 'token', required: true, description: 'Токен из письма' })
+  @ApiResponse({ status: 200, description: 'Подтверждено' })
+  @ApiResponse({
+    status: 400,
+    description: 'Ссылка недействительна или использована',
+  })
   @Get('confirm')
   @RateLimit({ limit: 10, windowSeconds: 60 })
   async confirmLink(
@@ -172,6 +250,16 @@ export class AuthController {
   }
 
   /** POST /auth/resend — отправить письмо заново. */
+  @ApiOperation({
+    summary: 'Отправить письмо заново',
+    description: 'Не чаще, чем раз в OTP_RESEND_COOLDOWN_SECONDS.',
+  })
+  @ApiZodBody(resendSchema)
+  @ApiResponse({ status: 200, description: 'Письмо отправлено' })
+  @ApiResponse({
+    status: 400,
+    description: 'Слишком рано или попытка не найдена',
+  })
   @Post('resend')
   @HttpCode(HttpStatus.OK)
   @RateLimit({ limit: 3, windowSeconds: 60 })

@@ -1,4 +1,12 @@
 import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { ApiZodBody } from '../../common/openapi/zod-openapi.js';
+import {
+  ApiCookieAuth,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
@@ -33,6 +41,11 @@ import {
  * Охранники по порядку: сначала ограничитель частоты (он дешёвый и не ходит
  * в базу), потом проверка токена.
  */
+@ApiTags('Профиль')
+@ApiCookieAuth('access_token')
+@ApiParam({ name: 'userId', format: 'uuid', description: 'Номер пользователя' })
+@ApiResponse({ status: 401, description: 'Нет или невалиден токен' })
+@ApiResponse({ status: 429, description: 'Превышен лимит запросов' })
 @Controller('users')
 @UseGuards(RateLimitGuard, JwtAuthGuard)
 export class ProfileController {
@@ -51,6 +64,18 @@ export class ProfileController {
    * целиком, и человек не смог бы открыть даже себя. Решение принимается
    * внутри, когда уже видно, свой номер в адресе или чужой.
    */
+  @ApiOperation({
+    summary: 'Посмотреть профиль',
+    description:
+      'Свой — целиком. Чужой — только с правом users@read и только теми ' +
+      'полями, которые открыли выданные роли действия.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Профиль. Набор полей зависит от прав',
+  })
+  @ApiResponse({ status: 403, description: 'Нет права users@read' })
+  @ApiResponse({ status: 404, description: 'Пользователь не найден' })
   @Get(':userId')
   // Общий лимит на чтение профилей с одного адреса. Чужие профили сверх
   // того считаются отдельно и строже — в ProfileReadLimiter.
@@ -78,6 +103,21 @@ export class ProfileController {
    * сработает никогда: охранник отрабатывает раньше обработчика, а значит
    * по IP отобьёт первым.
    */
+  @ApiOperation({
+    summary: 'Изменить профиль',
+    description:
+      'Свой — только photo. Чужой — с правом users@update. Почту себе ' +
+      'через этот адрес менять нельзя: нужен сценарий смены с подтверждением.',
+  })
+  @ApiZodBody(updateProfileSchema, 'Только изменяемые поля')
+  @ApiResponse({
+    status: 200,
+    description: 'Обновлённый профиль или подтверждение',
+  })
+  @ApiResponse({ status: 400, description: 'Пустое тело или неизвестное поле' })
+  @ApiResponse({ status: 403, description: 'Поле запрещено для этой роли' })
+  @ApiResponse({ status: 404, description: 'Пользователь не найден' })
+  @ApiResponse({ status: 409, description: 'Почта занята' })
   @Patch(':userId')
   @RateLimit({ limit: 60, windowSeconds: 60 })
   update(

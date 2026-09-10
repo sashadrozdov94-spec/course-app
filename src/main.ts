@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
@@ -22,9 +23,39 @@ async function bootstrap() {
   // когда процесс получит SIGTERM (например, docker stop).
   app.enableShutdownHooks();
 
+  /**
+   * Описание API на /api.
+   *
+   * Схемы тел и параметров не описаны декораторами вручную — они
+   * переведены из тех же zod-схем, по которым запросы проверяются
+   * (см. common/openapi/zod-openapi.ts). Один источник правды: правка в
+   * схеме сразу видна в документации.
+   *
+   * Окно открытое: это учебный проект, и документация нужна раньше, чем
+   * появится кто-то, от кого её стоило бы закрывать. В боевом приложении
+   * его закрывают либо совсем, либо охранником.
+   */
+  const swagger = new DocumentBuilder()
+    .setTitle('Course App API')
+    .setDescription(
+      'Аутентификация, RBAC, профиль, смена почты, удаление аккаунта, ' +
+        'список пользователей. Токены передаются в httpOnly cookies, ' +
+        'поэтому «Try it out» работает только из того же браузера, где вы вошли.',
+    )
+    .setVersion('1.0')
+    // Оба токена лежат в cookies, а не в заголовке Authorization
+    .addCookieAuth('access_token', { type: 'apiKey', in: 'cookie' })
+    .build();
+
+  SwaggerModule.setup('api', app, () =>
+    SwaggerModule.createDocument(app, swagger),
+  );
+
   await app.listen(port);
 
-  new Logger('Bootstrap').log(`Приложение слушает http://localhost:${port}`);
+  const logger = new Logger('Bootstrap');
+  logger.log(`Приложение слушает http://localhost:${port}`);
+  logger.log(`Описание API: http://localhost:${port}/api`);
 }
 
 await bootstrap();
