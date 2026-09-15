@@ -4,6 +4,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { validateEnv } from './config/env.schema.js';
+import { ConvertModule } from './convert/convert.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { RbacAdminModule } from './rbac/rbac-admin.module.js';
 
@@ -31,6 +32,7 @@ import { RbacAdminModule } from './rbac/rbac-admin.module.js';
     // Раздел /admin/rbac/*. Само ядро RBAC приезжает сюда вместе с ним
     // и с UsersModule, поэтому отдельно RbacModule здесь не нужен.
     RbacAdminModule,
+    ConvertModule,
   ],
   controllers: [AppController],
   providers: [AppService],

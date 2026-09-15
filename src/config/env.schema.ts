@@ -77,6 +77,21 @@ export const envSchema = z.object({
   USER_LIST_LIMIT: z.coerce.number().int().positive().default(60),
   USER_LIST_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 
+  // Конвертация файлов.
+  // Лимиты размера задаются отдельно для каждого исходного формата, как
+  // требует ТЗ: XML многословнее JSON, и одинаковая планка для них
+  // означала бы разный объём полезных данных. CSV, наоборот, самый
+  // экономный, поэтому ему дано больше всех.
+  CONVERT_MAX_CSV_BYTES: z.coerce.number().int().positive().default(10_485_760),
+  CONVERT_MAX_JSON_BYTES: z.coerce.number().int().positive().default(5_242_880),
+  CONVERT_MAX_XML_BYTES: z.coerce.number().int().positive().default(10_485_760),
+  CONVERT_MAX_YAML_BYTES: z.coerce.number().int().positive().default(5_242_880),
+  // Сколько ждать конвертацию, прежде чем убить поток
+  CONVERT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // Сколько конвертаций в час с одного аккаунта
+  CONVERT_LIMIT: z.coerce.number().int().positive().default(60),
+  CONVERT_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
+
   // Папка для загруженных файлов. Сами файлы лежат в assets/, а не рядом
   // с кодом: сервис их только принимает и отдаёт путь.
   UPLOAD_DIR: z.string().min(1).default('./assets'),

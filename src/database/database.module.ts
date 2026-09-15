@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Env } from '../config/env.schema.js';
 import { AuthAuditLog } from '../auth/entities/auth-audit-log.entity.js';
 import { EmailVerification } from '../auth/entities/email-verification.entity.js';
+import { FileConversion } from '../convert/entities/file-conversion.entity.js';
 import { Grant } from '../rbac/entities/grant.entity.js';
 import { Permission } from '../rbac/entities/permission.entity.js';
 import { RbacAuditLog } from '../rbac/entities/rbac-audit-log.entity.js';
@@ -36,6 +37,7 @@ import { User } from '../users/entities/user.entity.js';
           Permission,
           Grant,
           RbacAuditLog,
+          FileConversion,
         ],
 
         // Само создаёт и правит таблицы. Только для учёбы, не для боевого сервера

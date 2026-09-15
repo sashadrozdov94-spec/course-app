@@ -19,7 +19,7 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
+    "test:e2e": "nest build && vitest run --config ./vitest.config.e2e.ts",
     "seed": "nest build && node dist/seed"
   },
   "dependencies": {
@@ -33,11 +33,13 @@
     "@nestjs/typeorm": "^12.0.1",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
+    "fast-xml-parser": "^5.11.1",
     "nodemailer": "^9.0.6",
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^1.1.0",
+    "yaml": "^2.9.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -47,6 +49,7 @@
     "@nestjs/testing": "^12.0.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
     "@types/nodemailer": "^8.0.1",
     "@types/supertest": "^7.0.0",
