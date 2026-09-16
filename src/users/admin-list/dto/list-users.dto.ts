@@ -1,6 +1,15 @@
 import * as z from 'zod';
 import { UserStatus } from '../../entities/user.entity.js';
 
+// Курсор живёт в common: он одинаков для любого списка со страницами и
+// ничего не знает о пользователях. Здесь его снова выставляем наружу,
+// чтобы сервис списка брал всё нужное из одного места.
+export {
+  type Cursor,
+  decodeCursor,
+  encodeCursor,
+} from '../../../common/cursor.js';
+
 /** Границы страницы из ТЗ: 20–100, по умолчанию 20. */
 export const PAGE_SIZE_MIN = 1;
 export const PAGE_SIZE_MAX = 100;
@@ -61,50 +70,6 @@ export interface UserListItem {
 export interface UserListPage {
   items: UserListItem[];
   nextCursor: string | null;
-}
-
-/**
- * Курсор — это место, на котором остановились: значение поля сортировки
- * плюс номер строки.
- *
- * Номер нужен как «разрешитель ничьей»: у десяти пользователей может быть
- * одинаковый статус и одна и та же секунда создания, и без второго ключа
- * страницы то повторяли бы строки, то теряли их. Пара (поле, id)
- * уникальна всегда, поэтому пагинация устойчива (п. 1.6 ТЗ).
- *
- * Кодируем в base64url, чтобы клиенту не приходило в голову собирать
- * курсор руками: это деталь реализации, а не часть контракта.
- */
-export interface Cursor {
-  /** Значение поля сортировки у последней отданной строки */
-  value: string;
-  id: string;
-}
-
-export function encodeCursor(cursor: Cursor): string {
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-/** Разбирает курсор. Мусор — не ошибка сервера, а 400 у вызывающего. */
-export function decodeCursor(raw: string): Cursor | null {
-  try {
-    const parsed: unknown = JSON.parse(
-      Buffer.from(raw, 'base64url').toString('utf8'),
-    );
-
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      typeof (parsed as Cursor).value !== 'string' ||
-      typeof (parsed as Cursor).id !== 'string'
-    ) {
-      return null;
-    }
-
-    return parsed as Cursor;
-  } catch {
-    return null;
-  }
 }
 
 /**

@@ -92,6 +92,76 @@ export const envSchema = z.object({
   CONVERT_LIMIT: z.coerce.number().int().positive().default(60),
   CONVERT_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
 
+  // Трансформация изображений.
+  // Лимиты размера, как и у текстовых форматов, задаются отдельно для
+  // каждого исходного формата: SVG — это разметка, и мегабайт её описывает
+  // картинку, на которую растру не хватило бы и сотни мегабайт. Давать
+  // вектору такую же планку значило бы разрешить рисовать часами.
+  IMAGE_MAX_PNG_BYTES: z.coerce.number().int().positive().default(10_485_760),
+  IMAGE_MAX_JPEG_BYTES: z.coerce.number().int().positive().default(10_485_760),
+  IMAGE_MAX_SVG_BYTES: z.coerce.number().int().positive().default(2_097_152),
+
+  // Потолок сторон выходного растра при растеризации SVG (п. 1.1 ТЗ)
+  IMAGE_MAX_WIDTH: z.coerce.number().int().positive().default(8_000),
+  IMAGE_MAX_HEIGHT: z.coerce.number().int().positive().default(8_000),
+
+  // Потолок числа пикселей — и на входе, и на выходе. Отдельно от сторон:
+  // 8000 x 8000 укладывается в обе, но это 64 миллиона пикселей и четверть
+  // гигабайта памяти под несжатый растр. Этот же лимит закрывает
+  // «декомпрессионную бомбу»: маленький файл, который разворачивается в
+  // изображение на сотни мегапикселей.
+  IMAGE_MAX_PIXELS: z.coerce.number().int().positive().default(40_000_000),
+
+  // Сторона растра, когда у SVG нет собственного размера: ни width с
+  // height, ни viewBox. Без этого рисовать было бы нечего
+  IMAGE_DEFAULT_SIZE: z.coerce.number().int().positive().default(1_024),
+
+  // Сколько отведено на саму обработку изображения
+  IMAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+
+  // Качество JPEG по умолчанию, если клиент не указал своего
+  IMAGE_JPEG_QUALITY: z.coerce.number().int().min(1).max(100).default(80),
+
+  // Цвет холста при растеризации SVG. Значение из п. 1.3.1 ТЗ.
+  // Проверяется здесь, а не только на границе запроса: опечатка в .env
+  // иначе всплыла бы отказом библиотеки на первой же картинке, а не при
+  // старте. Правило записано повторно, чтобы конфигурация не зависела от
+  // модуля изображений; канонический вид — BACKGROUND в
+  // images/converters/encode.ts
+  IMAGE_BACKGROUND: z
+    .string()
+    .regex(
+      /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|transparent)$/i,
+      'Цвет фона: #rgb, #rgba, #rrggbb, #rrggbbaa или transparent',
+    )
+    .default('#ffffff'),
+
+  // История трансформаций.
+  // Сколько дней её хранить (п. 1.6 ТЗ: срок определяет администратор).
+  // 0 — не удалять ничего: бывает, что срок диктует регламент снаружи
+  TRANSFORMATION_HISTORY_RETENTION_DAYS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(90),
+  // Как часто заходить и убирать просроченное, часы
+  TRANSFORMATION_HISTORY_CLEANUP_HOURS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(24),
+
+  // Потолок размера результата, который соглашаемся сохранить по save=true.
+  // Отдельно от лимитов на исходные файлы: те защищают процессор и память
+  // на время конвертации, а этот - место на диске на всё время хранения.
+  // Результат бывает и крупнее исходника: JSON из компактного CSV, PNG из
+  // пары строк разметки SVG.
+  TRANSFORMATION_MAX_SAVE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(33_554_432),
+
   // Папка для загруженных файлов. Сами файлы лежат в assets/, а не рядом
   // с кодом: сервис их только принимает и отдаёт путь.
   UPLOAD_DIR: z.string().min(1).default('./assets'),

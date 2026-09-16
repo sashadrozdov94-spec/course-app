@@ -6,7 +6,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { validateEnv } from './config/env.schema.js';
 import { ConvertModule } from './convert/convert.module.js';
 import { DatabaseModule } from './database/database.module.js';
+import { ImagesModule } from './images/images.module.js';
 import { RbacAdminModule } from './rbac/rbac-admin.module.js';
+import { StorageModule } from './storage/storage.module.js';
+import { TransformationsModule } from './transformations/transformations.module.js';
 
 @Module({
   imports: [
@@ -32,7 +35,13 @@ import { RbacAdminModule } from './rbac/rbac-admin.module.js';
     // Раздел /admin/rbac/*. Само ядро RBAC приезжает сюда вместе с ним
     // и с UsersModule, поэтому отдельно RbacModule здесь не нужен.
     RbacAdminModule,
+    // Хранилище файлов. Стоит перед историей: она в него пишет
+    StorageModule,
+    // Единая история трансформаций. Стоит перед модулями конвертации:
+    // они пишут в неё, а не наоборот
+    TransformationsModule,
     ConvertModule,
+    ImagesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

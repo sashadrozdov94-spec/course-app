@@ -8,8 +8,15 @@ import { Grant } from './rbac/entities/grant.entity.js';
 import { Permission } from './rbac/entities/permission.entity.js';
 import { ADMIN_ROLE, Role } from './rbac/entities/role.entity.js';
 import { RbacConfigService } from './rbac/rbac-config.service.js';
+import {
+  TRANSFORMATIONS_ACTIONS,
+  TRANSFORMATIONS_PERMISSION,
+} from './transformations/transformation.js';
 import { User, UserStatus } from './users/entities/user.entity.js';
-import { USERS_ACTIONS } from './users/shared/users-permission.js';
+import {
+  USERS_ACTIONS,
+  USERS_PERMISSION,
+} from './users/shared/users-permission.js';
 
 /**
  * Наполнение базы для разработки и ручных проверок.
@@ -60,19 +67,40 @@ const ROLES = [
   {
     name: ADMIN_ROLE,
     description: 'Управление ролями, разрешениями и назначениями',
-    actions: [] as string[],
+    users: [] as string[],
+    transformations: [] as string[],
   },
   {
     name: 'support',
-    description: 'Поддержка: видит профили и почту, менять не может',
-    actions: [USERS_ACTIONS.Read, USERS_ACTIONS.ReadEmail, USERS_ACTIONS.List],
+    description: 'Поддержка: видит профили, почту и историю трансформаций',
+    users: [USERS_ACTIONS.Read, USERS_ACTIONS.ReadEmail, USERS_ACTIONS.List],
+    // Разбор обращений «у меня не конвертируется» без этого невозможен:
+    // видно только свою историю, а спрашивают про чужую
+    transformations: [TRANSFORMATIONS_ACTIONS.HistoryAdmin],
   },
   {
     name: 'manager',
     description: 'Менеджер: видит и правит профили, почту не видит',
-    actions: [USERS_ACTIONS.Read, USERS_ACTIONS.Update, USERS_ACTIONS.List],
+    users: [USERS_ACTIONS.Read, USERS_ACTIONS.Update, USERS_ACTIONS.List],
+    transformations: [] as string[],
   },
 ];
+
+/**
+ * Разрешения, которые понимает код, и их действия.
+ *
+ * Списки берём из перечислений, а не переписываем руками: добавится новое
+ * действие — сид подхватит его сам. Без строки в этой таблице право не
+ * существует для RbacService, и окно, закрытое им, отвечает 403 всем
+ * подряд.
+ */
+const PERMISSIONS = [
+  { name: USERS_PERMISSION, actions: Object.values(USERS_ACTIONS) },
+  {
+    name: TRANSFORMATIONS_PERMISSION,
+    actions: Object.values(TRANSFORMATIONS_ACTIONS),
+  },
+] as const;
 
 async function seed(): Promise<void> {
   const logger = new Logger('Seed');
@@ -91,30 +119,34 @@ async function seed(): Promise<void> {
     const passwords = app.get(PasswordService);
     const rbacConfig = app.get(RbacConfigService);
 
-    // ── Разрешение users со всеми действиями, которые понимает код ──
-    // Список берём из USERS_ACTIONS, а не переписываем руками: добавится
-    // новое действие — сид подхватит его сам.
-    const allActions = Object.values(USERS_ACTIONS);
-    let permission = await permissions.findOneBy({ name: 'users' });
+    // ── Разрешения со всеми действиями, которые понимает код ──
+    const permissionByName = new Map<string, Permission>();
 
-    if (!permission) {
-      permission = await permissions.save(
-        permissions.create({ name: 'users', actions: allActions }),
-      );
-      logger.log(`Создано разрешение users: ${allActions.join(', ')}`);
-    } else {
-      // Разрешение есть, но действия могли устареть — дополняем
-      const missing = allActions.filter(
-        (action) => !permission!.actions.includes(action),
-      );
+    for (const spec of PERMISSIONS) {
+      const actions = [...spec.actions];
+      let permission = await permissions.findOneBy({ name: spec.name });
 
-      if (missing.length > 0) {
-        permission.actions = [...permission.actions, ...missing];
-        await permissions.save(permission);
-        logger.log(
-          `Разрешению users добавлены действия: ${missing.join(', ')}`,
+      if (!permission) {
+        permission = await permissions.save(
+          permissions.create({ name: spec.name, actions }),
         );
+        logger.log(`Создано разрешение ${spec.name}: ${actions.join(', ')}`);
+      } else {
+        // Разрешение есть, но действия могли устареть — дополняем
+        const missing = actions.filter(
+          (action) => !permission!.actions.includes(action),
+        );
+
+        if (missing.length > 0) {
+          permission.actions = [...permission.actions, ...missing];
+          await permissions.save(permission);
+          logger.log(
+            `Разрешению ${spec.name} добавлены действия: ${missing.join(', ')}`,
+          );
+        }
       }
+
+      permissionByName.set(spec.name, permission);
     }
 
     // ── Роли и назначения ──
@@ -132,24 +164,44 @@ async function seed(): Promise<void> {
 
       roleByName.set(spec.name, role);
 
-      const existing = await grants.findOneBy({
-        roleId: role.id,
-        permissionId: permission.id,
-      });
+      // Назначения: своё на каждое разрешение
+      const wanted: [string, string[]][] = [
+        [USERS_PERMISSION, [...spec.users]],
+        [TRANSFORMATIONS_PERMISSION, [...spec.transformations]],
+      ];
 
-      if (!existing) {
+      for (const [permissionName, actions] of wanted) {
+        const permission = permissionByName.get(permissionName);
+
+        // Пустой список действий значит разное у администратора и у
+        // остальных. У admin — «все действия разрешения», как и в
+        // назначениях через API: администратор по определению может всё.
+        // У прочих ролей — что это разрешение им не нужно, и назначения
+        // быть не должно вовсе.
+        if (!permission || (actions.length === 0 && spec.name !== ADMIN_ROLE)) {
+          continue;
+        }
+
+        const existing = await grants.findOneBy({
+          roleId: role.id,
+          permissionId: permission.id,
+        });
+
+        if (existing) {
+          continue;
+        }
+
         await grants.save(
           grants.create({
             roleId: role.id,
             permissionId: permission.id,
-            actions: spec.actions,
+            actions,
           }),
         );
+
         logger.log(
-          `Роли ${spec.name} выдано users: ` +
-            (spec.actions.length > 0
-              ? spec.actions.join(', ')
-              : 'все действия'),
+          `Роли ${spec.name} выдано ${permissionName}: ` +
+            (actions.length > 0 ? actions.join(', ') : 'все действия'),
         );
       }
     }

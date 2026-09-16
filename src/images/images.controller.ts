@@ -25,8 +25,16 @@ import { RateLimit } from '../common/decorators/rate-limit.decorator.js';
 import { RateLimitGuard } from '../common/guards/rate-limit.guard.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import type { User } from '../users/entities/user.entity.js';
-import { ConvertService, type SupportedDirection } from './convert.service.js';
-import { type ConvertDto, convertSchema } from './dto/convert.dto.js';
+import {
+  type ConvertImageDto,
+  convertImageSchema,
+} from './dto/convert-image.dto.js';
+import { ImageFormat } from './image-format.js';
+import {
+  ImagesService,
+  type SupportedDirection,
+  type UploadedImage,
+} from './images.service.js';
 
 /**
  * Верхняя граница размера для multer.
@@ -39,38 +47,27 @@ import { type ConvertDto, convertSchema } from './dto/convert.dto.js';
  */
 const HARD_LIMIT_BYTES = 32 * 1024 * 1024;
 
-/**
- * Что кладёт multer в @UploadedFile.
- *
- * Описано здесь, а не взято из глобального Express.Multer.File: то
- * пространство имён подключается расширением глобальных типов, которое при
- * moduleResolution: nodenext видно не всегда. Нам нужны три поля, и явный
- * тип надёжнее — заодно видно, чем именно мы пользуемся.
- */
-interface UploadedFileLike {
-  buffer: Buffer;
-  originalname?: string;
-  size: number;
-}
-
-@ApiTags('Конвертация файлов')
+@ApiTags('Трансформация изображений')
 @ApiCookieAuth('access_token')
 @ApiResponse({ status: 401, description: 'Нет или невалиден токен' })
 @ApiResponse({ status: 429, description: 'Превышен лимит запросов' })
-@Controller('api/convert')
+@Controller('api/images/convert')
 @UseGuards(RateLimitGuard, JwtAuthGuard)
-export class ConvertController {
-  constructor(private readonly convertService: ConvertService) {}
+export class ImagesController {
+  constructor(private readonly images: ImagesService) {}
 
   /**
-   * GET /api/convert/formats — какие направления поддерживаются.
+   * GET /api/images/convert/formats — какие направления поддерживаются.
    *
-   * Список собирается из зарегистрированных модулей, а не задан константой:
-   * добавится новый конвертер — он появится здесь сам.
+   * Список собирается из зарегистрированных направлений, а не задан
+   * константой: появится новый формат — он появится и здесь сам.
    */
   @ApiOperation({
     summary: 'Поддерживаемые направления конвертации',
-    description: 'Собирается из зарегистрированных модулей трансформации.',
+    description:
+      'Собирается из зарегистрированных направлений. Обратного ' +
+      'направления (растр → svg) в списке нет и не будет: векторизация ' +
+      'не поддерживается.',
   })
   @ApiResponse({
     status: 200,
@@ -80,11 +77,11 @@ export class ConvertController {
       items: {
         type: 'object',
         properties: {
-          source: { type: 'string', example: 'xml' },
+          source: { type: 'string', example: 'svg' },
           target: {
             type: 'array',
             items: { type: 'string' },
-            example: ['csv', 'json', 'yaml'],
+            example: ['png', 'jpeg'],
           },
         },
       },
@@ -93,24 +90,24 @@ export class ConvertController {
   @Get('formats')
   @RateLimit({ limit: 60, windowSeconds: 60 })
   formats(): SupportedDirection[] {
-    return this.convertService.supportedFormats();
+    return this.images.supportedFormats();
   }
 
   /**
-   * POST /api/convert — сконвертировать файл.
+   * POST /api/images/convert — сконвертировать изображение.
    *
    * Возвращаем StreamableFile, а не Buffer: Buffer из обработчика Nest
-   * прогоняет через обычный сериализатор ответа, и клиент получает
-   * {"type":"Buffer","data":[60,63,...]} вместо файла. StreamableFile
+   * прогоняется через обычный сериализатор ответа, и клиент получает
+   * {"type":"Buffer","data":[137,80,...]} вместо файла. StreamableFile
    * отдаётся телом как есть и сам проставляет Content-Type и
    * Content-Disposition — это и есть «потоковый файл» из ТЗ.
    */
   @ApiOperation({
-    summary: 'Конвертировать файл',
+    summary: 'Конвертировать изображение',
     description:
       'Исходный формат определяется по содержимому. Лимит размера свой ' +
-      'для каждого формата и задаётся в конфигурации. Разбор идёт в ' +
-      'отдельном потоке с таймаутом.',
+      'для каждого формата и задаётся в конфигурации. Поддерживаются ' +
+      'png → jpeg, jpeg → png, svg → png и svg → jpeg.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -118,8 +115,26 @@ export class ConvertController {
       type: 'object',
       required: ['file', 'targetFormat'],
       properties: {
-        file: { type: 'string', format: 'binary' },
-        targetFormat: { type: 'string', enum: ['csv', 'json', 'xml', 'yaml'] },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Исходное изображение: PNG, JPEG или SVG',
+        },
+        targetFormat: {
+          type: 'string',
+          enum: Object.values(ImageFormat),
+        },
+        options: {
+          type: 'string',
+          description:
+            'Объект JSON строкой — вложенных объектов в multipart нет. ' +
+            'quality (1–100) — качество JPEG; width и height — размер ' +
+            'растра при растеризации SVG; background — цвет холста ' +
+            '(#rgb, #rgba, #rrggbb, #rrggbbaa или transparent), по ' +
+            'умолчанию #ffffff. Параметр, которого направление не ' +
+            'понимает (например quality для PNG), — ошибка 400.',
+          example: '{"width":512,"background":"#ffffff"}',
+        },
         save: {
           type: 'string',
           enum: ['true', 'false'],
@@ -131,26 +146,21 @@ export class ConvertController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Файл в целевом формате' })
+  @ApiResponse({ status: 200, description: 'Изображение в целевом формате' })
   @ApiResponse({
     status: 400,
-    description: 'Пустой или синтаксически неверный файл',
+    description:
+      'Невалидное изображение, неподдерживаемое направление, ' +
+      'некорректные параметры или превышение максимальных размеров',
   })
   @ApiResponse({
     status: 413,
-    description: 'Превышен лимит размера для формата',
+    description: 'Превышен лимит размера для исходного формата',
   })
-  @ApiResponse({
-    status: 415,
-    description: 'Формат или направление не поддерживаются',
-  })
+  @ApiResponse({ status: 415, description: 'Неподдерживаемый формат файла' })
   @ApiResponse({
     status: 500,
     description: 'Не удалось сохранить результат в хранилище (при save=true)',
-  })
-  @ApiResponse({
-    status: 504,
-    description: 'Конвертация не уложилась в таймаут',
   })
   @Post()
   @HttpCode(200)
@@ -161,18 +171,19 @@ export class ConvertController {
     }),
   )
   async convert(
-    @UploadedFile() file: UploadedFileLike | undefined,
-    @Body(new ZodValidationPipe(convertSchema)) dto: ConvertDto,
+    @UploadedFile() file: UploadedImage | undefined,
+    @Body(new ZodValidationPipe(convertImageSchema)) dto: ConvertImageDto,
     @CurrentUser() me: User,
   ): Promise<StreamableFile> {
     if (!file) {
       throw new BadRequestException('Файл обязателен');
     }
 
-    const result = await this.convertService.convert(
+    const result = await this.images.convert(
       me.id,
       file,
       dto.targetFormat,
+      dto.options,
       dto.save,
     );
 

@@ -1,11 +1,10 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { TokenModule } from '../auth/token.module.js';
+import { TransformationsModule } from '../transformations/transformations.module.js';
 import { UsersModule } from '../users/users.module.js';
 import { ConvertController } from './convert.controller.js';
 import { ConvertService } from './convert.service.js';
-import { FileConversion } from './entities/file-conversion.entity.js';
 import { ConversionRunner } from './worker/conversion-runner.service.js';
 
 /**
@@ -18,7 +17,9 @@ import { ConversionRunner } from './worker/conversion-runner.service.js';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([FileConversion]),
+    // История конвертаций общая с изображениями — своей таблицы у модуля
+    // нет (см. transformations/)
+    TransformationsModule,
     // Охраннику закрытых окон нужны токены и пользователи
     TokenModule,
     UsersModule,

@@ -13,7 +13,7 @@ import type { Repository } from 'typeorm';
 import { AppModule } from '../dist/app.module.js';
 import { TokenService } from '../dist/auth/token.service.js';
 import { RateLimitGuard } from '../dist/common/guards/rate-limit.guard.js';
-import { FileConversion } from '../dist/convert/entities/file-conversion.entity.js';
+import { Transformation } from '../dist/transformations/entities/transformation.entity.js';
 import { User, UserStatus } from '../dist/users/entities/user.entity.js';
 
 /**
@@ -31,7 +31,7 @@ import { User, UserStatus } from '../dist/users/entities/user.entity.js';
 describe('Конвертация файлов (e2e)', () => {
   let app: INestApplication;
   let users: Repository<User>;
-  let history: Repository<FileConversion>;
+  let history: Repository<Transformation>;
   let cookie: string;
   let userId: string;
 
@@ -73,7 +73,7 @@ describe('Конвертация файлов (e2e)', () => {
     await app.init();
 
     users = moduleFixture.get(getRepositoryToken(User));
-    history = moduleFixture.get(getRepositoryToken(FileConversion));
+    history = moduleFixture.get(getRepositoryToken(Transformation));
 
     // Готовый активный пользователь: проверяем конвертацию, а не
     // регистрацию с подтверждением почты — у неё свои тесты
@@ -382,10 +382,12 @@ describe('Конвертация файлов (e2e)', () => {
       );
 
       expect(success).toBeDefined();
+      // Единое хранилище: конвертация файлов помечена типом file
+      expect(success!.type).toBe('file');
       expect(success!.status).toBe('success');
       expect(success!.statusCode).toBe(200);
-      expect(success!.sourceBytes).toBe(Buffer.byteLength(CSV));
-      expect(success!.targetBytes).toBeGreaterThan(0);
+      expect(success!.fileSize).toBe(Buffer.byteLength(CSV));
+      expect(success!.resultSize).toBeGreaterThan(0);
       expect(success!.durationMs).toBeGreaterThanOrEqual(0);
 
       const failure = records.find((row) => row.status === 'error');
